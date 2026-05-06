@@ -133,44 +133,51 @@ const App = () => {
     const q = normalize(pName);
     if (q.length < 3) return null;
 
-    // ── 1단계: 이름 후보 필터 (엄격한 포함 관계) ────────────────────────
+    const tc = normalize(pColor);
+    const ts = normalize(pSize);
+
+    // ── 1단계: 완전 이름 일치 → 색상/사이즈로 베스트 선택 ─────────────
+    const exactByName = allProducts.filter(p => normalize(getPName(p)) === q);
+    if (exactByName.length > 0) {
+      const best =
+        exactByName.find(p => normalize(getPOpt1(p)) === tc && normalize(getPOpt2(p)) === ts) ||
+        exactByName.find(p => normalize(getPOpt2(p)) === ts) ||
+        exactByName.find(p => normalize(getPOpt1(p)) === tc) ||
+        exactByName[0];
+      return best;
+    }
+
+    // ── 2단계: 엄격한 부분 매칭 (80% 길이 유사도) ───────────────────────
+    // "더블유빅카라미니원피스"(10자)에 "원피스"(3자)가 매칭되는 것 방지
     const candidates = allProducts.filter(p => {
       const dbN = normalize(getPName(p));
       if (!dbN || dbN.length < 2) return false;
       const shorter = q.length <= dbN.length ? q : dbN;
       const longer  = q.length >  dbN.length ? q : dbN;
-      // 짧은 쪽이 긴 쪽에 완전 포함되어야 함
       if (!longer.includes(shorter)) return false;
-      // 짧은 쪽 길이가 긴 쪽의 50% 이상이어야 함 ("기타"가 "기타 상품" 매칭 방지)
-      return shorter.length >= longer.length * 0.5;
+      // 짧은 쪽이 긴 쪽의 80% 이상이어야 후보로 인정
+      return shorter.length >= longer.length * 0.8;
     });
 
     if (candidates.length === 0) return null;
 
-    const tc = normalize(pColor);
-    const ts = normalize(pSize);
-
-    // ── 2단계: 색상 + 사이즈 정밀 매칭 ─────────────────────────────────
+    // ── 3단계: 색상 + 사이즈 정밀 매칭 ──────────────────────────────────
     const perfect = candidates.find(p =>
       normalize(getPOpt1(p)) === tc && normalize(getPOpt2(p)) === ts
     );
     if (perfect) return perfect;
 
-    // ── 3단계: 사이즈만 매칭 (사이즈가 더 중요) ─────────────────────────
     if (ts && ts.length > 0) {
       const sizeMatch = candidates.find(p => normalize(getPOpt2(p)) === ts);
       if (sizeMatch) return sizeMatch;
     }
-
-    // ── 4단계: 색상만 매칭 ───────────────────────────────────────────────
     if (tc && tc.length > 0) {
       const colorMatch = candidates.find(p => normalize(getPOpt1(p)) === tc);
       if (colorMatch) return colorMatch;
     }
 
-    // ── 5단계: 이름이 충분히 구체적인 경우에만 첫 번째 후보 반환 ─────────
-    // 너무 짧은 이름(2~3글자)은 오매칭 위험이 높으므로 반환 안 함
-    if (q.length >= 5) return candidates[0];
+    // ── 4단계: 이름이 충분히 길어야만 첫 후보 반환 (≥7자) ───────────────
+    if (q.length >= 7) return candidates[0];
 
     return null;
   };
