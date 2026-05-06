@@ -131,28 +131,48 @@ const App = () => {
   const findSmartMatch = (pName, pColor, pSize) => {
     if (!pName || pName.length < 2) return null;
     const q = normalize(pName);
-    const matches = allProducts.filter(p => {
-      const dbN = normalize(getPName(p));
-      return dbN.includes(q) || q.includes(dbN);
-    });
-    if (matches.length === 0) return null;
-    
-    const tc = normalize(pColor), ts = normalize(pSize);
-    
-    // 1. Exact Name + Color + Size Match
-    const perfect = matches.find(p => normalize(getPOpt1(p)) === tc && normalize(getPOpt2(p)) === ts);
-    if (perfect) return perfect;
-    
-    // 2. Exact Name + Size Match (Size is usually more critical than color)
-    const sizeMatch = matches.find(p => normalize(getPOpt2(p)) === ts);
-    if (sizeMatch) return sizeMatch;
+    if (q.length < 3) return null;
 
-    // 3. Exact Name + Color Match
-    const colorMatch = matches.find(p => normalize(getPOpt1(p)) === tc);
-    if (colorMatch) return colorMatch;
-    
-    // 4. Default to first match if name is strong match
-    return matches[0];
+    // ── 1단계: 이름 후보 필터 (엄격한 포함 관계) ────────────────────────
+    const candidates = allProducts.filter(p => {
+      const dbN = normalize(getPName(p));
+      if (!dbN || dbN.length < 2) return false;
+      const shorter = q.length <= dbN.length ? q : dbN;
+      const longer  = q.length >  dbN.length ? q : dbN;
+      // 짧은 쪽이 긴 쪽에 완전 포함되어야 함
+      if (!longer.includes(shorter)) return false;
+      // 짧은 쪽 길이가 긴 쪽의 50% 이상이어야 함 ("기타"가 "기타 상품" 매칭 방지)
+      return shorter.length >= longer.length * 0.5;
+    });
+
+    if (candidates.length === 0) return null;
+
+    const tc = normalize(pColor);
+    const ts = normalize(pSize);
+
+    // ── 2단계: 색상 + 사이즈 정밀 매칭 ─────────────────────────────────
+    const perfect = candidates.find(p =>
+      normalize(getPOpt1(p)) === tc && normalize(getPOpt2(p)) === ts
+    );
+    if (perfect) return perfect;
+
+    // ── 3단계: 사이즈만 매칭 (사이즈가 더 중요) ─────────────────────────
+    if (ts && ts.length > 0) {
+      const sizeMatch = candidates.find(p => normalize(getPOpt2(p)) === ts);
+      if (sizeMatch) return sizeMatch;
+    }
+
+    // ── 4단계: 색상만 매칭 ───────────────────────────────────────────────
+    if (tc && tc.length > 0) {
+      const colorMatch = candidates.find(p => normalize(getPOpt1(p)) === tc);
+      if (colorMatch) return colorMatch;
+    }
+
+    // ── 5단계: 이름이 충분히 구체적인 경우에만 첫 번째 후보 반환 ─────────
+    // 너무 짧은 이름(2~3글자)은 오매칭 위험이 높으므로 반환 안 함
+    if (q.length >= 5) return candidates[0];
+
+    return null;
   };
 
   const findMatchesSorted = (query) => {
@@ -215,9 +235,12 @@ const App = () => {
                 const c = cleanVal(cell);
                 if (colMap.box   === -1 && (c.includes('패킹') || c.includes('박스') || (c.toUpperCase().includes('NO') && ci === 0))) colMap.box   = ci;
                 if (colMap.name  === -1 && (c === '품명' || c === '제품명' || c === '상품명')) colMap.name  = ci;
-                if (colMap.color === -1 && (c.includes('컬러') || c.includes('색상'))) colMap.color = ci;
+                // 발색, 컬러, 색상 모두 인식
+                if (colMap.color === -1 && (c.includes('발색') || c.includes('컬러') || c.includes('색상'))) colMap.color = ci;
                 if (colMap.size  === -1 && (c.includes('사이즈') || c.toUpperCase() === 'SIZE')) colMap.size  = ci;
-                if (colMap.qty   === -1 && (c.includes('수량') || c.toUpperCase() === 'QTY') && !c.includes('총')) colMap.qty = ci;
+                // 포장수량 우선, 그 다음 수량/QTY (총수량 제외)
+                if (colMap.qty === -1 && (c === '포장수량' || c === '박스수량')) colMap.qty = ci;
+                if (colMap.qty === -1 && (c.includes('수량') || c.toUpperCase() === 'QTY') && !c.includes('총') && !c.includes('합')) colMap.qty = ci;
                 // Size-as-column detection
                 if (isRollaru) {
                   const m = c.match(/^(\d{1,2})'?$/); // inch sizes: 18' 20' 24' etc
@@ -260,12 +283,21 @@ const App = () => {
               });
             } else {
               const ci_c = colMap.color !== -1 ? colMap.color : -1;
-              const ci_s = colMap.size  !== -1 ? colMap.size  : (colMap.color !== -1 ? 3 : 2);
-              const ci_q = colMap.qty   !== -1 ? colMap.qty   : (colMap.color !== -1 ? 4 : 3);
+              // 사이즈 컬럼이 없으면 color 다음 컬럼으로 추정
+              const ci_s = colMap.size !== -1 ? colMap.size
+                : colMap.color !== -1 ? colMap.color + 1
+                : colMap.name  !== -1 ? colMap.name  + 2 : 3;
+              // 수량 컬럼: 명시적으로 찾은 것 우선, 없으면 사이즈 다음 컬럼
+              const ci_q = colMap.qty !== -1 ? colMap.qty
+                : ci_s !== -1 ? ci_s + 1 : 4;
               const rawC = ci_c !== -1 ? cleanVal(row[ci_c]) : '';
-              const effC = (/^\d+$/.test(rawC) && parseInt(rawC) < 50) ? '' : rawC;
-              const { color, size } = splitColorSize(effC, cleanVal(row[ci_s]));
-              const pq = parseInt(cleanVal(row[ci_q]).replace(/[^0-9]/g, '')) || 1;
+              // 발색 컬럼 숫자(56, 22 같은 색상코드)는 그대로 유지
+              const effC = (/^\d+$/.test(rawC) && parseInt(rawC) < 10) ? '' : rawC;
+              const rawS = cleanVal(row[ci_s]);
+              const { color, size } = splitColorSize(effC, rawS);
+              const rawQ = cleanVal(row[ci_q]).replace(/[^0-9]/g, '');
+              // 수량 안전 캡: 바코드 등 비정상 컬럼 읽기 방지 (최대 99,999)
+              const pq = Math.min(parseInt(rawQ) || 1, 99999);
               pushToSheetMap(sheetMap, sheetName, cs, ce, pn, color, size, pq);
             }
           });
