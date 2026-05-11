@@ -141,7 +141,7 @@ const App = () => {
     if (exactByName.length > 0) {
       const best =
         exactByName.find(p => normalize(getPOpt1(p)) === tc && normalize(getPOpt2(p)) === ts) ||
-        exactByName.find(p => normalize(getPOpt2(p)) === ts) ||
+        ((!tc || tc === '') ? exactByName.find(p => normalize(getPOpt2(p)) === ts) : null) ||
         exactByName.find(p => normalize(getPOpt1(p)) === tc) ||
         exactByName[0];
       return best;
@@ -230,6 +230,7 @@ const App = () => {
           let colMap = { box: -1, name: -1, color: -1, size: -1, qty: -1 };
           let headerFound = false;
           let lastBoxStart = -1, lastBoxEnd = -1, localCounter = 1;
+          let lastPn = '', lastColor = '';
           const sheetMap = {}; // separate per-sheet box map
 
           rows.forEach((row) => {
@@ -262,8 +263,14 @@ const App = () => {
             if (!headerFound) return;
 
             // ── Product name ────────────────────────────────────────────────
-            const pn = cleanVal(row[colMap.name !== -1 ? colMap.name : 1]);
+            let pn = cleanVal(row[colMap.name !== -1 ? colMap.name : 1]);
+            if (!pn || pn.length < 2) {
+              pn = lastPn;
+            } else {
+              if (pn !== lastPn) lastColor = ''; // 신규 상품이면 색상 초기화
+            }
             if (!pn || pn.length < 2 || pn.includes('합계') || pn.includes('[★리퍼브]') || /^\d+$/.test(pn)) return;
+            lastPn = pn;
 
             // ── Box range ───────────────────────────────────────────────────
             let cs = 0, ce = 0;
@@ -283,7 +290,10 @@ const App = () => {
             // ── Items ───────────────────────────────────────────────────────
             const useMatrix = isRollaru && Object.keys(sizeHeaderIdxs).length > 0;
             if (useMatrix) {
-              const clr = colMap.color !== -1 ? cleanVal(row[colMap.color]) : '';
+              let clr = colMap.color !== -1 ? cleanVal(row[colMap.color]) : '';
+              if (!clr) clr = lastColor;
+              lastColor = clr;
+
               Object.entries(sizeHeaderIdxs).forEach(([sz, ci]) => {
                 const qv = parseInt(cleanVal(row[ci]).replace(/[^0-9]/g, '')) || 0;
                 if (qv > 0) pushToSheetMap(sheetMap, sheetName, cs, ce, pn, clr, sz, qv);
@@ -297,7 +307,10 @@ const App = () => {
               // 수량 컬럼: 명시적으로 찾은 것 우선, 없으면 사이즈 다음 컬럼
               const ci_q = colMap.qty !== -1 ? colMap.qty
                 : ci_s !== -1 ? ci_s + 1 : 4;
-              const rawC = ci_c !== -1 ? cleanVal(row[ci_c]) : '';
+              let rawC = ci_c !== -1 ? cleanVal(row[ci_c]) : '';
+              if (!rawC) rawC = lastColor;
+              lastColor = rawC;
+
               // 발색 컬럼 숫자(56, 22 같은 색상코드)는 그대로 유지
               const effC = (/^\d+$/.test(rawC) && parseInt(rawC) < 10) ? '' : rawC;
               const rawS = cleanVal(row[ci_s]);
